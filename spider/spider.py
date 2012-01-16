@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import urllib2
+import datetime
 import os.path
 import math
 import re
@@ -139,7 +140,7 @@ def find_categories():
 		if not url:
 			print "No url...", str(item)
 			continue
-		
+
 		curs.execute('select id, code, name from categories where code=%s', [str(code)])
 		rows = curs.fetchall()
 		if len(rows) == 0:
@@ -153,16 +154,11 @@ def full_flush_all_categories(cached=False):
 	for cat, varname in list(curs.fetchall()):
 		find_updates(full=True, cat=cat, no_seq=True, cat_var=varname, cached=cached, perpage=2000)
 
-def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickname', cached=False, full=False, perpage=1000, reseq=False):
+def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False, perpage=1000):
 	print "Finding updates on category", cat
 	print "Cache:", cached
-	print "Sequence only:", seq_only
-	print "No seq:", no_seq
 	print "Full:", full
 	print "Per page:", perpage
-
-	if reseq and ((not full) or no_seq or seq_only or cat):
-		raise Exception("Can only reseq with full, no cat, seq")
 
 	n = perpage
 
@@ -173,9 +169,8 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 
 	url = 'http://www.amiami.com/top/search/list2?%spagemax=%i' % (catpart, n)
 	content = get_page(url, cached=cached).read()
-	pages = sorted(list(set(int(x) for x in re.findall("%s&getcnt=0&pagecnt=([0-9]+)", content))))
+	pages = sorted(list(set(int(x) for x in re.findall("&getcnt=0&pagecnt=([0-9]+)", content))))
 	pages = range(1,max(pages)+1)
-	seq = -1
 
 	if not pages:
 		pages = [1]
@@ -190,8 +185,6 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 
 	page_no = 0
 	matchset = []
-	seq_done = no_seq
-	seq_itemlist = list()
 	while page_no < maxpage and page_no < len(pages):
 		page_url = "%s&getcnt=0&pagecnt=%i" % (url, pages[page_no])
 		page_no += 1
@@ -203,166 +196,84 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 
 		xml = html.fromstring(page_content)
 		itemlist = list()
-		for item_xml in xml.xpath('//table//table//table'):
+		for item_xml in xml.xpath('//span[@class="list_table"]'):
 			try:
 				item = {}
-				itemlink, = list(set(item_xml.xpath('tr/td/a/@href')))
+				
+				itemlink, = list(set(item_xml.xpath('span[@class="product_img"]/a/@href')))
 				item['url'] = str(itemlink)
-				maybetype = item_xml.xpath('tr/td/img/@src')
-				no_image = False
-				if len(maybetype):
-					if maybetype[0] == 'http://www.amiami.jp/images/product/thumbnail/noimage.gif':
-						no_image = True
-						if len(maybetype) == 2:
-							status_url = str(maybetype[1])
-						else:
-							status_url = None
-					else:
-						status_url = str(maybetype[0])
-				else:
-					status_url = None
-				if status_url == 'http://www.amiami.jp/images/en/e_nav-reorder.gif':
-					item['status'] = 'reorder'
-				elif status_url == 'http://www.amiami.jp/images/en/e_nav-preorder.gif':
-					item['status'] = 'preorder'
-				else:
-					item['status'] = None
-				if not no_image:
-					imgurl, = list(set(item_xml.xpath('tr/td/a/img/@src')))
-					item['image'] = imgurl.replace('\n','').replace('thumbnail','qvga')
-				else:
+				url_match = re.search(r'gcode=(.*?)&', item['url'])
+				if not url_match:
+					raise Exception("Bad URL: %s" % item['url'])
+				item['code'] = url_match.group(1)
+
+				imgurl, = item_xml.xpath('span[@class="product_img"]/a/img/@src')
+				item['image'] = str(imgurl).replace('thumbnail','qvga')
+				if 'noimage.gif' in item['image']:
 					item['image'] = None
-				descr = item_xml.xpath('tr/td/a/text()')
-				if len(descr) == 0:
+
+				status_elts = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_day"]//text()')
+				item['stock'] = 'Now on sale'
+				# Back-order?
+				if len(status_elts) == 3:
+					if 'Sold out' in str(status_elts[2]):
+						item['stock'] = 'Sold out'
+				status = str(status_elts[1])
+				if status == ': Preorder':
+					item['status'] = 'preorder'
+				elif status == ': Preorder(Tentative)':
+					item['status'] = 'tentative-preorder'
+				elif status == ': Reorder':
+					item['status'] = 'reorder'
+				elif status == ': Released':
+					item['status'] = 'released'
+				elif status == ': ':
+					item['status'] = None
+				else:
+					raise Exception("Bad status: %s" % status)
+
+				descr_elt, = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a/text()')
+				item['description'] = unicode(descr_elt)
+				if len(item['description']) == 0:
 					item['description'] = None
+
+				release_date_elt, = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a//comment()') # Need // since sometimes there's dodgy angle brackets in description!
+				date_match = re.match('<!-- &nbsp;&lt;&nbsp;(.*?)&nbsp;&gt; -->', str(release_date_elt))
+				item['release_date'] = date_match.group(1)
+
+				price_bits = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_price"]//text()')
+				#item['discount'] = int(off)
+				#item['price'] = int(re.sub('[^0-9]', '', price))
+				if len(price_bits) == 3:
+					if '%' not in str(price_bits[1]):
+						raise Exception("Bad discount")
+					item['discount'] = int(re.sub('[^0-9]', '', str(price_bits[1])))
+					item['price'] = int(re.sub('[^0-9]', '', str(price_bits[2])))
 				else:
-					item['description'] = unicode(descr[0])
-				price, = [ i for i in item_xml.xpath('tr/td//text()') if 'Sale Price' in i ]
-				if price == '\n\nSale Price':
-					price, off = item_xml.xpath('tr/td/span/b/text()')
-					item['discount'] = int(off)
-					item['price'] = int(re.sub('[^0-9]', '', price))
-				else:
-					item['discount'] = 0
-					item['price'] = int(re.sub('[^0-9]', '', price))
-				stock, = [ i for i in item_xml.xpath('tr/td//text()') if 'Stock:' in i ]
-				stock, = re.search('Stock:\n\n\t(.+)\n\n', stock).groups()
-				item['stock'] = str(stock)
+					item['discount'] = None
+					item['price'] = int(re.sub('[^0-9]', '', str(price_bits[0])))
 
 				itemlist.append(item)
-				#(descr, itemlink, imgurl, stock, typ, price, off, seq))
 			except Exception, e:
 				import traceback
 				traceback.print_exc()
+				pdb.set_trace()
 				continue
 
-		if reseq:
-			seq_itemlist.extend(itemlist)
-			if page_no == maxpage:
-				seq_itemlist.reverse()
-				for item in seq_itemlist:
-					update(item, seq='increment')
-		elif (not seq_done) and (not no_seq):
-			seq_done = page_no # We unset it later if we fail
-			seq_itemlist.extend(itemlist)
-			if cat is None:
-				curs.execute('select id, name, url, image, stock, status, price, discount, updateseq from products order by updateseq desc limit %s', (n * page_no + 100,))
-			else:
-				curs.execute('select p.id, p.name, p.url, image, stock, status, price, discount, updateseq from products p join product_categories pc on pc.product_id = p.id join categories c on c.id = pc.category_id where c.code = %s order by updateseq desc limit %s', (cat, n * page_no + 100))
-			matchset = [ (d[0], {
-					'description': unicode(d[1], 'utf8') if d[1] is not None else None,
-					'url': d[2],
-					'image': d[3],
-					'stock': d[4],
-					'status': d[5],
-					'price': d[6],
-					'discount': d[7],
-				}, d[8]) for d in curs.fetchall() ]
-			matchset.reverse()
-
-			# Need to find the items which have changed.
-			revitems = list(reversed(seq_itemlist))
-			itemi = -1
-			dbi = None
-			expectedupdates = list()
-			hits = 0
-			updates = 0
-			for item in revitems:
-				itemi += 1
-				if dbi is None:
-					match = [ i for (i, data) in zip(xrange(n),matchset) if data[1]['url'] == item['url'] ]
-					if len(match) == 0:
-						# Over 1000 updates?!
-						print "Item not in match set:", matchset[0], len(revitems), len(matchset)
-						if page_no == maxpage:
-							maxpage += 1
-						seq_done = False
-						dsn.rollback()
-						break
-					dbi = match[0]
-				skipcount = 0
-				while skipcount < 5000 and dbi < len(matchset) and matchset[dbi][1]['url'] != item['url']:
-					expectedupdates.append(matchset[dbi][1])
-					skipcount += 1
-					dbi += 1
-				#if dbi < len(matchset) and matchset[dbi][1]['url'] != item['url'] and hits > 100:
-				#	# If we got here, we have 20 items in our list, in a row, which are missing.
-				#	print ":(", item, hits
-				#	raise Exception("A fountain of tears")
-				if skipcount > 100 and page_no < 5:
-					print "Skipped too many; assuming we can sync at a lower point."
-					if page_no == maxpage:
-						maxpage += 1
-					seq_done = False
-					dsn.rollback()
-					break
-				if skipcount > 100:
-					print "Skipped too many and dug too deep; just going to assume everything's an update."
-					dbi = len(matchset)
-					# Just start syncing
-				if False:
-					pass
-				elif dbi < len(matchset) and item != matchset[dbi][1]:
-					# This entry wasn't meant to have changed, but stock changes don't count in ordering.
-					update(item, matchset[dbi][0], matchset[dbi][1], category=cat, seq='ignore')
-					dbi += 1
-					hits += 1
-				elif dbi >= len(matchset):
-					expectedupdates = [ u for u in expectedupdates if u['url'] != item['url'] ]
-					updates += 1
-					if cat is None:
-						update(item, seq='increment', needs_refresh=True)
-					else:
-						#raise Exception("New product; can't sync to a sequence number")
-						# Should be OK just to stick it at the end of the list; we'll put it in sequence later
-						update(item, category=cat, seq='ignore', needs_refresh=True)
-				else:
-					dbi += 1
-					hits += 1
-			if seq_done:
-				print "Matched", hits, "entries."
-				print "Updated", updates, "entries."
-				if len(expectedupdates):
-					#raise Exception("Missed updates: " + str(expectedupdates))
-					print "Missed updates: " + str(expectedupdates)
-				if seq_only:
-					break
-			else:
-				print "Could not sync items by page %i" % page_no
-				
-		if (seq_done is not False) and seq_done < page_no or no_seq:
-			# Note this may hit some items already hit above
-			for item in itemlist:
-				update(item, category=cat, seq='ignore')
+		# Note this may hit some items already hit above
+		for item in itemlist:
+			update(item, category=cat)
 
 def diff(new, old):
 	diff = []
 	for key in set(new.keys() + old.keys()):
 		if key == 'diff':
 			continue
+		elif key == 'url':
+			continue
 		if new.get(key) != old.get(key):
-			if key == 'url':
-				raise Exception("Can't update the URL")
+			if key == 'code':
+				raise Exception("Can't update the code")
 			diff += [(key, new.get(key), old.get(key))]
 	return diff
 
@@ -372,56 +283,49 @@ def format_diff(diffarr):
 		lines += [row[0] + u':' + unicode(row[1]).replace(u'\\', u'\\\\').replace(u',', u'\\,').replace(u';', u'\\;') + u"," + unicode(row[2]).replace(u'\\', u'\\\\').replace(u',', u'\\,').replace(u';', u'\\;')]
 	return ';'.join(lines)
 
-def update(new, product_id = None, old = None, category = None, seq = None, needs_refresh=False):
+def update(new, product_id = None, old = None, category = None, needs_refresh=False):
 	if product_id is None:
-		curs.execute('select id, name, url, image, stock, status, price, discount from products where url=%(url)s', new)
+		curs.execute('select id, name, code, url, image, stock, status, price, discount, release_date from products where code=%(code)s', new)
 		data = curs.fetchall()
 		if len(data):
 			d, = data
 			product_id = d[0]
 			old = {
 				'description': unicode(d[1], 'utf8') if d[1] is not None else None,
-				'url': d[2],
-				'image': d[3],
-				'stock': d[4],
-				'status': d[5],
-				'price': d[6],
-				'discount': d[7],
+				'code': d[2],
+				'url': d[3],
+				'image': d[4],
+				'stock': d[5],
+				'status': d[6],
+				'price': d[7],
+				'discount': d[8],
+				'release_date': d[9],
 			}
 	if old is None:
 		if update_raise:
 			raise Exception("Unexpected update")
-		curs.execute('''insert into products (name, url, image, stock, status, price, discount, updateseq, last_site_update) values (%(description)s, %(url)s, %(image)s, %(stock)s, %(status)s, %(price)s, %(discount)s, -100000, now()) returning id''', new)
+		curs.execute('''insert into products (name, url, code, image, stock, status, price, discount, release_date, last_site_update) values (%(description)s, %(url)s, %(code)s, %(image)s, %(stock)s, %(status)s, %(price)s, %(discount)s, %(release_date)s, now()) returning id''', new)
 		(product_id,), = curs.fetchall()
 		old = new.copy()
 		mydiff = [('exists',True,'')]
 	else:
 		mydiff = diff(new, old)
 
-	print "UPDATE ", new['url']
+	print "UPDATE", new['code'], mydiff
 	if category != None:
 		curs.execute('''insert into product_categories (product_id, category_id) select %s, c.id from categories c where c.code = %s and not exists (select 1 from product_categories pc where pc.product_id = %s and pc.category_id = c.id)''', (product_id, category, product_id))
 		if curs.rowcount > 0:
 			print "Category", category
 			mydiff.append(('category',category,''))
 
-	if not (mydiff or needs_refresh or seq == 'increment'):
+	if not (mydiff or needs_refresh):
 		print "No difference on %(url)s" % new
 		return
 	
 	diffstr = format_diff(mydiff)
 	print "Diff", diffstr
 
-	updates = "name = %(description)s, image = %(image)s, stock = %(stock)s, status = %(status)s, price = %(price)s, discount = %(discount)s"
-
-	if seq == 'increment':
-		print "Incr seq"
-		updates += ", updateseq = nextval('product_update_seq')"
-	elif seq == 'ignore':
-		# Just leave the sequence alone.
-		pass
-	else:
-		raise Exception("Should not be here")
+	updates = "name = %(description)s, image = %(image)s, stock = %(stock)s, status = %(status)s, price = %(price)s, discount = %(discount)s, release_date = %(release_date)s, url = %(url)s"
 
 	if needs_refresh:
 		updates += ', last_site_update = now()'
@@ -445,7 +349,7 @@ if __name__ == '__main__':
 	update_raise = True
 	find_updates(cached=True)
 	update_raise = False
-	dsn.commit()
+	#dsn.commit()
 	curs.execute("select code, var, count(*) from categories join product_categories on category_id = categories.id group by 1, 2")
 	cats = [ (r[0], r[1]) for r in curs.fetchall() ]
 	modn = int(time.time() / 3600 + 1) % (len(cats)*10 + 1)
@@ -453,6 +357,5 @@ if __name__ == '__main__':
 		find_categories()
 	else:
 		cat, cat_var = cats[modn % len(cats)]
-		# Should be seq_only
-		find_updates(no_seq=True, cat=cat, cat_var=cat_var, cached=False, full=True, perpage=1000)
+		find_updates(cat=cat, cat_var=cat_var, cached=False, perpage=1000)
 	dsn.commit()

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+cd /home/amiami/spiderlog
+ls -t|grep -v 'bz2$'|tail -n +25|while read I; do bzip2 $I; done
+ls -t|grep 'bz2$'|tail -n +73|xargs rm -f
