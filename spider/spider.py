@@ -98,10 +98,10 @@ def get_page(url, cached = True):
 		return open(CACHE + cache_name(url), 'r')
 	else:
 		print "Fetch page"
-		if not login.done:
-			print "Logging in"
-			urllib2.urlopen(prepare_req("http://www.amiami.jp/shop/?set=english"))
-			login.done = True
+		#if not login.done:
+		#	print "Logging in"
+		#	urllib2.urlopen(prepare_req("http://www.amiami.jp/shop/?set=english"))
+		#	login.done = True
 		x = urllib2.urlopen(prepare_req(url))
 		if cached or True:
 			f = open(CACHE + cache_name(url), 'w')
@@ -112,7 +112,8 @@ def get_page(url, cached = True):
 			return x
 
 def find_categories():
-	content = get_page("http://www.amiami.jp/shop/?set=english")
+	return True # TODO fix
+	content = get_page("http://www.amiami.com/shop/?set=english")
 	uni_content = unicode(content.read(), 'utf-8', 'replace')
 	xml = html.fromstring(uni_content)
 	for item in xml.xpath('//map/area'):
@@ -166,24 +167,18 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 	n = perpage
 
 	if cat is not None:
-		catpart = 'vgvar_1_name=%s&vgvar_1_value=%s&vgvar_1_operator=LIKE&' % (cat_var, cat)
+		catpart = '%s=%s&' % (cat_var, cat)
 	else:
 		catpart = ''
 
-	#'http://www.amiami.jp/shop?set=english&vgForm=SearchProducts&vgvar_1_name=e_originaltitle&vgvar_1_value=Touhou%20Project&vgvar_1_operator=LIKE&sort_1_name=sortkey&sort_1_direction=ASC&results_per_page=20&next=Next&previous=Previous&template=default/product/e_search_results.html'
-	url1 = '''http://www.amiami.jp/shop/?vgform=SearchProducts&%svgvar_4_name=e_translated&vgvar_4_value=1&vgvar_4_operator=LIKE&sort_1_name=UpdateDate&Sort_1_direction=DESC&next=next&previous=previous&max_results=0&results_per_page=%i&template=default/product/e_search_results.html''' % (catpart, n)
-	#url1 = '''http://www.amiami.jp/shop/?vgform=SearchProducts&vgvar_1_name=CategoryNickname&vgvar_1_value=_00459&vgvar_1_operator=LIKE&vgvar_4_name=e_translated&vgvar_4_value=1&vgvar_4_operator=LIKE&sort_1_name=UpdateDate&Sort_1_direction=DESC&next=next&previous=previous&max_results=0&results_per_page=40&template=default/product/e_search_results.html'''
-	#http://www.amiami.jp/shop/?vgform=SearchProducts&vgvar_1_name=CategoryNickname&vgvar_1_value=_00459&vgvar_1_operator=LIKE&vgvar_2_name=e_translated&vgvar_2_value=1&vgvar_2_operator=LIKE&vgvar_3_name=e_Maker&vgvar_3_value=Good%20Smile%20Company&vgvar_3_operator=LIKE&sort_1_name=UpdateDate&Sort_1_direction=DESC&next=next&previous=previous&max_results=0&results_per_page=40&template=default/product/e_search_results.html
-	#http://www.amiami.jp/shop/?vgform=SearchProducts&vgvar_1_name=CategoryNickname&vgvar_1_value=_00459&vgvar_1_operator=LIKE&vgvar_2_name=e_translated&vgvar_2_value=1&vgvar_2_operator=LIKE&vgvar_3_name=e_seriestitle&vgvar_3_value=figma&vgvar_3_operator=LIKE&sort_1_name=UpdateDate&Sort_1_direction=DESC&next=next&previous=previous&max_results=0&results_per_page=40&template=default/product/e_search_results.html
-	#http://www.amiami.jp/shop/?vgform=SearchProducts&vgvar_1_name=CategoryNickname&vgvar_1_value=_00459&vgvar_1_operator=LIKE&vgvar_2_name=e_translated&vgvar_2_value=1&vgvar_2_operator=LIKE&vgvar_3_name=e_originaltitle&vgvar_3_value=ToHeart&vgvar_3_operator=LIKE&sort_1_name=UpdateDate&Sort_1_direction=DESC&next=next&previous=previous&max_results=0&results_per_page=40&template=default/product/e_search_results.html
-	#url1 = '''http://www.amiami.jp/shop/?vgform=SearchProducts&vgvar_1_name=SaleItem&vgvar_1_value=1&vgvar_1_operator=LIKE&vgvar_2_name=CategoryNickname&vgvar_2_value=_00459&vgvar_2_operator=LIKE&vgvar_4_name=e_translated&vgvar_4_value=1&vgvar_4_operator=LIKE&sort_1_name=DiscountRate&Sort_1_direction=DESC&next=next&previous=previous&max_results=0&results_per_page=1000&template=default/product/e_search_results.html'''
-	#url = 'http://www.amiami.jp/shop/?vgform=SearchProducts&page_number=7&search_id=1319360820563&template=default/product/e_search_results.html
-	content = get_page(url1, cached=cached).read()
-	pages = sorted(list(set(re.findall("(http://www.amiami.jp/shop/\\?vgform=SearchProducts&page_number=\\d+&search_id=\\d+&template=default/product/e_search_results.html)", content))), key = lambda x : int(re.search('(\\d+)', x).group(1)))
+	url = 'http://www.amiami.com/top/search/list2?%spagemax=%i' % (catpart, n)
+	content = get_page(url, cached=cached).read()
+	pages = sorted(list(set(int(x) for x in re.findall("%s&getcnt=0&pagecnt=([0-9]+)", content))))
+	pages = range(1,max(pages)+1)
 	seq = -1
 
 	if not pages:
-		pages = [url1]
+		pages = [1]
 	if full:
 		maxpage = len(pages)
 	else:
@@ -198,7 +193,7 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 	seq_done = no_seq
 	seq_itemlist = list()
 	while page_no < maxpage and page_no < len(pages):
-		page_url = pages[page_no]
+		page_url = "%s&getcnt=0&pagecnt=%i" % (url, pages[page_no])
 		page_no += 1
 		if page_no == 1:
 			# We already have page 1
