@@ -30,55 +30,55 @@ cookielib = None
 
 # Let's see if cookielib is available
 try:
-    import cookielib
+	import cookielib
 except ImportError:
-    # If importing cookielib fails
-    # let's try ClientCookie
-    try:
-        import ClientCookie
-    except ImportError:
-        # ClientCookie isn't available either
-        urlopen = urllib2.urlopen
-        Request = urllib2.Request
-    else:
-        # imported ClientCookie
-        urlopen = ClientCookie.urlopen
-        Request = ClientCookie.Request
-        cj = ClientCookie.LWPCookieJar()
+	# If importing cookielib fails
+	# let's try ClientCookie
+	try:
+		import ClientCookie
+	except ImportError:
+		# ClientCookie isn't available either
+		urlopen = urllib2.urlopen
+		Request = urllib2.Request
+	else:
+		# imported ClientCookie
+		urlopen = ClientCookie.urlopen
+		Request = ClientCookie.Request
+		cj = ClientCookie.LWPCookieJar()
 
 else:
-    # importing cookielib worked
-    urlopen = urllib2.urlopen
-    Request = urllib2.Request
-    cj = cookielib.LWPCookieJar()
-    # This is a subclass of FileCookieJar
-    # that has useful load and save methods
+	# importing cookielib worked
+	urlopen = urllib2.urlopen
+	Request = urllib2.Request
+	cj = cookielib.LWPCookieJar()
+	# This is a subclass of FileCookieJar
+	# that has useful load and save methods
 
 if cj is not None:
 # we successfully imported
 # one of the two cookie handling modules
 
-    if os.path.isfile(COOKIEFILE):
-        # if we have a cookie file already saved
-        # then load the cookies into the Cookie Jar
-        cj.load(COOKIEFILE)
+	if os.path.isfile(COOKIEFILE):
+		# if we have a cookie file already saved
+		# then load the cookies into the Cookie Jar
+		cj.load(COOKIEFILE)
 
-    # Now we need to get our Cookie Jar
-    # installed in the opener;
-    # for fetching URLs
-    if cookielib is not None:
-        # if we use cookielib
-        # then we get the HTTPCookieProcessor
-        # and install the opener in urllib2
-        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj), urllib2.HTTPHandler(debuglevel=DEBUG))
-        urllib2.install_opener(opener)
+	# Now we need to get our Cookie Jar
+	# installed in the opener;
+	# for fetching URLs
+	if cookielib is not None:
+		# if we use cookielib
+		# then we get the HTTPCookieProcessor
+		# and install the opener in urllib2
+		opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj), urllib2.HTTPHandler(debuglevel=DEBUG))
+		urllib2.install_opener(opener)
 
-    else:
-        # if we use ClientCookie
-        # then we get the HTTPCookieProcessor
-        # and install the opener in ClientCookie
-        opener = ClientCookie.build_opener(ClientCookie.HTTPCookieProcessor(cj), urllib2.HTTPHandler(debuglevel=DEBUG))
-        ClientCookie.install_opener(opener)
+	else:
+		# if we use ClientCookie
+		# then we get the HTTPCookieProcessor
+		# and install the opener in ClientCookie
+		opener = ClientCookie.build_opener(ClientCookie.HTTPCookieProcessor(cj), urllib2.HTTPHandler(debuglevel=DEBUG))
+		ClientCookie.install_opener(opener)
 
 def prepare_req(url):
 	return urllib2.Request(url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:5.0) Gecko/20100101 Firefox/5.0 Iceweasel/5.0", 'Accept-Language': 'en-us,en;q=0.5'})
@@ -146,7 +146,22 @@ def find_categories():
 		elif descr and rows[0][2] != descr:
 			curs.execute("""update categories set name=%s where id=%s""", [str(descr), id])
 
-def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickname', cached=True, full=False, perpage=1000):
+def full_flush_all_categories(cached=False):
+	curs.execute("truncate table product_categories")
+	curs.execute("select code, var from categories")
+	for cat, varname in list(curs.fetchall()):
+		find_updates(full=True, cat=cat, no_seq=True, cat_var=varname, cached=cached, perpage=2000)
+
+def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickname', cached=False, full=False, perpage=1000, reseq=False):
+	print "Finding updates on category", cat
+	print "Cache:", cached
+	print "Sequence only:", seq_only
+	print "No seq:", no_seq
+	print "Full:", full
+	print "Per page:", perpage
+
+	if reseq and ((not full) or no_seq or seq_only or cat):
+		raise Exception("Can only reseq with full, no cat, seq")
 
 	n = perpage
 
@@ -175,6 +190,8 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 		k = int(math.log(len(pages),2))+1
 		modn = int(time.time() / 3600 + 1) % 2**k
 		maxpage = 2**max([ x for x in range(k+1) if modn % 2**x == 0 ])
+
+	print "Will fetch", maxpage, "pages"
 
 	page_no = 0
 	matchset = []
@@ -244,13 +261,19 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 				traceback.print_exc()
 				continue
 
-		if not seq_done:
+		if reseq:
+			seq_itemlist.extend(itemlist)
+			if page_no == maxpage:
+				seq_itemlist.reverse()
+				for item in seq_itemlist:
+					update(item, seq='increment')
+		elif (not seq_done) and (not no_seq):
 			seq_done = page_no # We unset it later if we fail
 			seq_itemlist.extend(itemlist)
 			if cat is None:
-				curs.execute('select id, name, url, image, stock, status, price, discount, updateseq from products order by updateseq desc limit %s', (n * page_no,))
+				curs.execute('select id, name, url, image, stock, status, price, discount, updateseq from products order by updateseq desc limit %s', (n * page_no + 100,))
 			else:
-				curs.execute('select p.id, p.name, p.url, image, stock, status, price, discount, updateseq from products p join product_categories pc on pc.product_id = p.id join categories c on c.id = pc.category_id where c.code = %s order by updateseq desc limit %s', (cat, n * page_no))
+				curs.execute('select p.id, p.name, p.url, image, stock, status, price, discount, updateseq from products p join product_categories pc on pc.product_id = p.id join categories c on c.id = pc.category_id where c.code = %s order by updateseq desc limit %s', (cat, n * page_no + 100))
 			matchset = [ (d[0], {
 					'description': unicode(d[1], 'utf8') if d[1] is not None else None,
 					'url': d[2],
@@ -267,7 +290,6 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 			itemi = -1
 			dbi = None
 			expectedupdates = list()
-			ignore = list()
 			hits = 0
 			updates = 0
 			for item in revitems:
@@ -276,57 +298,76 @@ def find_updates(no_seq=False, seq_only=False, cat=None, cat_var='CategoryNickna
 					match = [ i for (i, data) in zip(xrange(n),matchset) if data[1]['url'] == item['url'] ]
 					if len(match) == 0:
 						# Over 1000 updates?!
-						print matchset[0], len(revitems), len(matchset)
-						print "Could not sync items by page %i" % page_no
+						print "Item not in match set:", matchset[0], len(revitems), len(matchset)
 						if page_no == maxpage:
 							maxpage += 1
 						seq_done = False
+						dsn.rollback()
 						break
 					dbi = match[0]
 				skipcount = 0
-				while skipcount < 500 and dbi < len(matchset) and matchset[dbi][1]['url'] != item['url']:
+				while skipcount < 5000 and dbi < len(matchset) and matchset[dbi][1]['url'] != item['url']:
 					expectedupdates.append(matchset[dbi][1])
 					skipcount += 1
 					dbi += 1
-				if dbi < len(matchset) and matchset[dbi][1]['url'] != item['url']:
-					# If we got here, we have 20 items in our list, in a row, which are missing.
-					print ":(", item, hits
-					raise Exception("A fountain of tears")
+				#if dbi < len(matchset) and matchset[dbi][1]['url'] != item['url'] and hits > 100:
+				#	# If we got here, we have 20 items in our list, in a row, which are missing.
+				#	print ":(", item, hits
+				#	raise Exception("A fountain of tears")
+				if skipcount > 100 and page_no < 5:
+					print "Skipped too many; assuming we can sync at a lower point."
+					if page_no == maxpage:
+						maxpage += 1
+					seq_done = False
+					dsn.rollback()
+					break
+				if skipcount > 100:
+					print "Skipped too many and dug too deep; just going to assume everything's an update."
+					dbi = len(matchset)
+					# Just start syncing
+				if False:
+					pass
 				elif dbi < len(matchset) and item != matchset[dbi][1]:
 					# This entry wasn't meant to have changed, but stock changes don't count in ordering.
+					update(item, matchset[dbi][0], matchset[dbi][1], category=cat, seq='ignore')
 					dbi += 1
 					hits += 1
-					update(item, matchset[dbi][0], matchset[dbi][1], category=cat, seq=-1)
 				elif dbi >= len(matchset):
 					expectedupdates = [ u for u in expectedupdates if u['url'] != item['url'] ]
 					updates += 1
 					if cat is None:
-						update(item, needs_refresh=True)
+						update(item, seq='increment', needs_refresh=True)
 					else:
 						#raise Exception("New product; can't sync to a sequence number")
 						# Should be OK just to stick it at the end of the list; we'll put it in sequence later
-						update(item, category=cat, seq=-1, needs_refresh=True)
+						update(item, category=cat, seq='ignore', needs_refresh=True)
 				else:
 					dbi += 1
 					hits += 1
-			if seq_done and updates > 0:
+			if seq_done:
 				print "Matched", hits, "entries."
 				print "Updated", updates, "entries."
-			ignore = list()
-			if len(expectedupdates):
-				#raise Exception("Missed updates: " + str(expectedupdates))
-				print "Missed updates: " + str(expectedupdates)
-			if seq_only:
-				break
-		if seq_done < page_no:
+				if len(expectedupdates):
+					#raise Exception("Missed updates: " + str(expectedupdates))
+					print "Missed updates: " + str(expectedupdates)
+				if seq_only:
+					break
+			else:
+				print "Could not sync items by page %i" % page_no
+				
+		if (seq_done is not False) and seq_done < page_no or no_seq:
 			# Note this may hit some items already hit above
 			for item in itemlist:
-				update(item, category=cat, seq=-1)
+				update(item, category=cat, seq='ignore')
 
 def diff(new, old):
 	diff = []
 	for key in set(new.keys() + old.keys()):
+		if key == 'diff':
+			continue
 		if new.get(key) != old.get(key):
+			if key == 'url':
+				raise Exception("Can't update the URL")
 			diff += [(key, new.get(key), old.get(key))]
 	return diff
 
@@ -336,81 +377,87 @@ def format_diff(diffarr):
 		lines += [row[0] + u':' + unicode(row[1]).replace(u'\\', u'\\\\').replace(u',', u'\\,').replace(u';', u'\\;') + u"," + unicode(row[2]).replace(u'\\', u'\\\\').replace(u',', u'\\,').replace(u';', u'\\;')]
 	return ';'.join(lines)
 
-def update(new, oldid = None, old = None, category = None, seq = None, needs_refresh=False):
-	orig_oldid = oldid
-	if oldid is None:
+def update(new, product_id = None, old = None, category = None, seq = None, needs_refresh=False):
+	if product_id is None:
 		curs.execute('select id, name, url, image, stock, status, price, discount from products where url=%(url)s', new)
 		data = curs.fetchall()
 		if len(data):
-			d = data[0]
-			oldid = d[0]
+			d, = data
+			product_id = d[0]
 			old = {
-				 'description': unicode(d[1], 'utf8') if d[1] is not None else None,
-				 'url': d[2],
-				 'image': d[3],
-				 'stock': d[4],
-				 'status': d[5],
-				 'price': d[6],
-				 'discount': d[7],
+				'description': unicode(d[1], 'utf8') if d[1] is not None else None,
+				'url': d[2],
+				'image': d[3],
+				'stock': d[4],
+				'status': d[5],
+				'price': d[6],
+				'discount': d[7],
 			}
-	if oldid is None:
+	if old is None:
 		if update_raise:
 			raise Exception("Unexpected update")
-		print "INSERT ", new['url']
-		if seq == None:
-			curs.execute('''insert into products (name, url, image, stock, status, price, discount, updateseq, update_date, recent_changes, last_site_update) values (%(description)s, %(url)s, %(image)s, %(stock)s, %(status)s, %(price)s, %(discount)s, nextval('product_update_seq'), now(), 'added', now()) returning id''', new)
-			(oldid,), = curs.fetchall()
-			curs.execute('''insert into product_updates (url, diff) values(%(url)s, 'added')''', new)
-		elif seq == -1:
-			curs.execute('''insert into products (name, url, image, stock, status, price, discount, updateseq, update_date, recent_changes, last_site_update) values (%(description)s, %(url)s, %(image)s, %(stock)s, %(status)s, %(price)s, %(discount)s, -100000, now(), 'added', now()) returning id''', new)
-			(oldid,), = curs.fetchall()
-			curs.execute('''insert into product_updates (url, diff) values(%(url)s, 'added')''', new)
-		else:
-			raise Exception("Should not be here")
-		old = new
+		curs.execute('''insert into products (name, url, image, stock, status, price, discount, updateseq, last_site_update) values (%(description)s, %(url)s, %(image)s, %(stock)s, %(status)s, %(price)s, %(discount)s, -100000, now()) returning id''', new)
+		(product_id,), = curs.fetchall()
+		old = new.copy()
+		mydiff = [('exists',True,'')]
+	else:
+		mydiff = diff(new, old)
 
 	print "UPDATE ", new['url']
-	mydiff = diff(new, old)
 	if category != None:
-		curs.execute('''insert into product_categories (product_id, category_id) select %s, c.id from categories c where c.code = %s and not exists (select 1 from product_categories pc where pc.product_id = %s and pc.category_id = c.id)''', (oldid, category, oldid))
+		curs.execute('''insert into product_categories (product_id, category_id) select %s, c.id from categories c where c.code = %s and not exists (select 1 from product_categories pc where pc.product_id = %s and pc.category_id = c.id)''', (product_id, category, product_id))
 		if curs.rowcount > 0:
-			mydiff.append(('category','',category))
+			print "Category", category
+			mydiff.append(('category',category,''))
 
-	if not mydiff and not needs_refresh:
+	if not (mydiff or needs_refresh or seq == 'increment'):
 		print "No difference on %(url)s" % new
+		return
+	
+	diffstr = format_diff(mydiff)
+	print "Diff", diffstr
+
+	updates = "name = %(description)s, image = %(image)s, stock = %(stock)s, status = %(status)s, price = %(price)s, discount = %(discount)s"
+
+	if seq == 'increment':
+		print "Incr seq"
+		updates += ", updateseq = nextval('product_update_seq')"
+	elif seq == 'ignore':
+		# Just leave the sequence alone.
+		pass
 	else:
-		diffstr = format_diff(mydiff)
-		new['diff'] = diffstr
-		if len(mydiff) == 1 and mydiff[0][0] == 'discount' or len(mydiff) == 0:
-			# Discount sometimes changes without product change.
-			updates = "name = %(description)s, image = %(image)s, stock = %(stock)s, status = %(status)s, price = %(price)s, discount = %(discount)s"
-		else:
-			updates = "name = %(description)s, image = %(image)s, stock = %(stock)s, status = %(status)s, price = %(price)s, discount = %(discount)s, update_date = now(), recent_changes = %(diff)s"
-		if seq is None:
-			updates += ", updateseq = nextval('product_update_seq')"
-		elif seq == -1:
-			# Just leave the sequence alone.
-			pass
-		else:
-			raise Exception("Should not be here")
-		if needs_refresh:
-			updates += ', last_site_update = now()'
-		if update_raise:
-			raise Exception("Unexpected update")
-		curs.execute('''update products set ''' + updates + ''' where url=%(url)s''', new)
-		curs.execute('''insert into product_updates (url, diff) values(%(url)s, %(diff)s)''', new)
+		raise Exception("Should not be here")
+
+	if needs_refresh:
+		updates += ', last_site_update = now()'
+	
+	if update_raise:
+		raise Exception("Unexpected update")
+
+	data = new.copy()
+	data['id'] = product_id
+	
+	curs.execute('''update products set ''' + updates + ''' where id=%(id)s''', data)
+	
+	if len(mydiff) == 1 and mydiff[0][0] == 'discount' or len(mydiff) == 0:
+		# Discount sometimes changes without product change.
+		pass
+	else:
+		curs.execute('''insert into product_updates (product_id, diff) values(%s, %s)''', [product_id, diffstr])
 
 if __name__ == '__main__':
 	find_updates(cached=False)
 	update_raise = True
 	find_updates(cached=True)
+	update_raise = False
 	dsn.commit()
-	curs.execute("select code, var, count(*) from categories join product_categories on category_id = categories.id group by 1")
+	curs.execute("select code, var, count(*) from categories join product_categories on category_id = categories.id group by 1, 2")
 	cats = [ (r[0], r[1]) for r in curs.fetchall() ]
 	modn = int(time.time() / 3600 + 1) % (len(cats)*10 + 1)
 	if modn == len(cats)*10:
 		find_categories()
 	else:
-		cat, cat_var = cats[int(modn/10)]
-		find_updates(seq_only=True, cat=cat, cat_var=cat_var, cached=False, perpage=100)
+		cat, cat_var = cats[modn % len(cats)]
+		# Should be seq_only
+		find_updates(no_seq=True, cat=cat, cat_var=cat_var, cached=False, full=True, perpage=1000)
 	dsn.commit()
