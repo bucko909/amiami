@@ -92,12 +92,12 @@ for id, name, url, image, price, stock, update_date, recent_diff in curs.fetchal
 		print """
         <item>
                 <title>%s</title>
-                <description>%s%s</description>
+                <description>&lt;a href="%s"&gt;%s%s&lt;/a&gt;</description>
                 <link>%s/</link>
                 <guid>http://amiami.incumbent.co.uk/?update=%s</guid>
                 <pubDate>%s</pubDate>
         </item>
-""" % (name, img, diff, url, id, update_date.strftime("%a, %d %b %Y %H:%M:%S +0000"))
+""" % (name, url, img, diff, url, id, update_date.strftime("%a, %d %b %Y %H:%M:%S +0000"))
 	else:
 		if recent_diff == 'added':
 			diff = 'New'

@@ -94,8 +94,8 @@ def get_page(url, cached = True):
 
 	c = cache_name(url)
 	print "GET ", url, "->", c
-	if cached and os.path.exists(CACHE + cache_name(url)):
-		print "Use cache"
+	if cached and os.path.exists(CACHE + c):
+		print "Use cache", CACHE + c
 		return open(CACHE + cache_name(url), 'r')
 	else:
 		print "Fetch page"
@@ -169,11 +169,16 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 
 	url = 'http://www.amiami.com/top/search/list2?%spagemax=%i' % (catpart, n)
 	content = get_page(url, cached=cached).read()
-	pages = sorted(list(set(int(x) for x in re.findall("&getcnt=0&pagecnt=([0-9]+)", content))))
-	pages = range(1,max(pages)+1)
+	if 'No item has found.' in content:
+		print "Empty result set"
+		raise Exception("No results")
 
-	if not pages:
+	pages = sorted(list(set(int(x) for x in re.findall("&getcnt=0&pagecnt=([0-9]+)", content))))
+	if pages:
+		pages = range(1,max(pages)+1)
+	else:
 		pages = [1]
+
 	if full:
 		maxpage = len(pages)
 	else:
@@ -185,13 +190,18 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 
 	page_no = 0
 	matchset = []
+	if 'onsen' in content:
+		print content
+		raise Exception("WTF")
 	while page_no < maxpage and page_no < len(pages):
 		page_url = "%s&getcnt=0&pagecnt=%i" % (url, pages[page_no])
 		page_no += 1
 		if page_no == 1:
 			# We already have page 1
+			print "Using pre-fetched content at", url
 			page_content = unicode(content, 'utf-8', 'replace')
 		else:
+			print "Fetching a new bunch of content."
 			page_content = unicode(get_page(page_url, cached=cached).read(), 'utf-8', 'replace')
 
 		xml = html.fromstring(page_content)
@@ -199,12 +209,13 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 		for item_xml in xml.xpath('//span[@class="list_table"]'):
 			try:
 				item = {}
-				
+
 				itemlink, = list(set(item_xml.xpath('span[@class="product_img"]/a/@href')))
 				item['url'] = str(itemlink)
 				url_match = re.search(r'gcode=(.*?)&', item['url'])
 				if not url_match:
 					raise Exception("Bad URL: %s" % item['url'])
+				item['url'] = item['url'].split('&')[0]
 				item['code'] = url_match.group(1)
 
 				imgurl, = item_xml.xpath('span[@class="product_img"]/a/img/@src')
@@ -221,10 +232,16 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 				status = str(status_elts[1])
 				if status == ': Preorder':
 					item['status'] = 'preorder'
+				elif status == ': Tentative Preorder':
+					item['status'] = 'tentative-preorder'
+				elif status == ': Provisional Preorder':
+					item['status'] = 'tentative-preorder'
 				elif status == ': Preorder(Tentative)':
 					item['status'] = 'tentative-preorder'
 				elif status == ': Reorder':
 					item['status'] = 'reorder'
+				elif status == ': Back-order':
+					item['status'] = 'back-order'
 				elif status == ': Released':
 					item['status'] = 'released'
 				elif status == ': ':
@@ -232,14 +249,13 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 				else:
 					raise Exception("Bad status: %s" % status)
 
-				descr_elt, = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a/text()')
-				item['description'] = unicode(descr_elt)
+				descr_zone = html.tostring(item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a')[0])
+				matcher = re.match(ur'.*?>(.*)<!-- &nbsp;&lt;&nbsp;(.*?)&nbsp;&gt; -->.*', unicode(descr_zone)) # Combat terrible HTML encoding
+				item['description'] = matcher.group(1)
 				if len(item['description']) == 0:
 					item['description'] = None
 
-				release_date_elt, = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a//comment()') # Need // since sometimes there's dodgy angle brackets in description!
-				date_match = re.match('<!-- &nbsp;&lt;&nbsp;(.*?)&nbsp;&gt; -->', str(release_date_elt))
-				item['release_date'] = date_match.group(1)
+				item['release_date'] = matcher.group(2)
 
 				price_bits = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_price"]//text()')
 				#item['discount'] = int(off)
@@ -248,17 +264,21 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 					if '%' not in str(price_bits[1]):
 						raise Exception("Bad discount")
 					item['discount'] = int(re.sub('[^0-9]', '', str(price_bits[1])))
-					item['price'] = int(re.sub('[^0-9]', '', str(price_bits[2])))
+					item['price'] = re.sub('[^0-9-]', '', str(price_bits[2]))
 				else:
 					item['discount'] = None
-					item['price'] = int(re.sub('[^0-9]', '', str(price_bits[0])))
+					item['price'] = re.sub('[^0-9-]', '', str(price_bits[0]))
+				if '-' in item['price']:
+					item['price'] = item['price'].split('-')[-1]
+				item['price'] = int(item['price'])
 
 				itemlist.append(item)
 			except Exception, e:
 				import traceback
-				traceback.print_exc()
-				pdb.set_trace()
-				continue
+				print html.tostring(item_xml)
+				print traceback.format_exc()
+				raise
+				#continue
 
 		# Note this may hit some items already hit above
 		for item in itemlist:
@@ -345,11 +365,11 @@ def update(new, product_id = None, old = None, category = None, needs_refresh=Fa
 		curs.execute('''insert into product_updates (product_id, diff) values(%s, %s)''', [product_id, diffstr])
 
 if __name__ == '__main__':
-	find_updates(cached=False)
+	use_cache = True
+	find_updates(cached=use_cache)
 	update_raise = True
 	find_updates(cached=True)
 	update_raise = False
-	#dsn.commit()
 	curs.execute("select code, var, count(*) from categories join product_categories on category_id = categories.id group by 1, 2")
 	cats = [ (r[0], r[1]) for r in curs.fetchall() ]
 	modn = int(time.time() / 3600 + 1) % (len(cats)*10 + 1)
@@ -357,5 +377,5 @@ if __name__ == '__main__':
 		find_categories()
 	else:
 		cat, cat_var = cats[modn % len(cats)]
-		find_updates(cat=cat, cat_var=cat_var, cached=False, perpage=1000)
+		find_updates(cat=cat, cat_var=cat_var, cached=use_cache, perpage=1000)
 	dsn.commit()
