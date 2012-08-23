@@ -48,7 +48,7 @@ elif 'cat' in param and re.match('^[0-9]+$', param['cat']):
 	curs.execute("select pu.id, name, p.url, image, price, stock, pu.cr_date, pu.diff from products p join product_updates pu on pu.product_id = p.id join product_categories pc on pc.product_id = p.id where pc.category_id = %s and pu.cr_date > '2011-10-24'" + instock_str + " order by pu.cr_date desc limit 50", [param['cat']])
 elif param.get('cat') == 'all':
 	catname = 'All'
-	curs.execute("select pu.id, name, p.url, image, price, stock, pu.cr_date, pu.diff from products p join product_updates pu on pu.product_id = p.id where pu.cr_date > '2011-10-24'" + instock_str + " order by pu.cr_date desc limit 50")
+	curs.execute("select pu.id, name, p.url, image, price, stock, pu.cr_date, pu.diff from products p join product_updates pu on pu.product_id = p.id where pu.cr_date > NOW() - INTERVAL '2 days'" + instock_str + " order by pu.cr_date desc limit 50")
 elif param.get('cat') == 'none':
 	catname = 'No category'
 	curs.execute("select pu.id, name, p.url, image, price, stock, pu.cr_date, pu.diff from products p join product_updates pu on pu.product_id = p.id left join product_categories pc on pc.product_id = p.id where pc.category_id is null and pu.cr_date > '2011-10-24'" + instock_str + " order by pu.cr_date desc limit 50", [param['cat']])
