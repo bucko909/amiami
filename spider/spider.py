@@ -251,11 +251,15 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 
 				descr_zone = html.tostring(item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a')[0])
 				matcher = re.match(ur'.*?>(.*)<!-- &nbsp;&lt;&nbsp;(.*?)&nbsp;&gt; -->.*', unicode(descr_zone)) # Combat terrible HTML encoding
-				item['description'] = matcher.group(1)
-				if len(item['description']) == 0:
+				if matcher:
+					item['description'] = matcher.group(1)
+					if len(item['description']) == 0:
+						item['description'] = None
+					item['release_date'] = matcher.group(2)
+				else:
 					item['description'] = None
+					item['release_date'] = None
 
-				item['release_date'] = matcher.group(2)
 
 				price_bits = item_xml.xpath('ul[@class="product_ul"]/li[@class="product_price"]//text()')
 				#item['discount'] = int(off)
