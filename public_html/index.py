@@ -35,7 +35,14 @@ if 'rss' in param:
 else:
 	rss = False
 
-if 'cat' in param and re.match('^[0-9]+$', param['cat']):
+if 'update' in param:
+	curs.execute('select product_id from product_updates where id=%s', [param['update']])
+	(param['id'],), = curs.fetchall()
+
+if 'id' in param:
+	curs.execute("select pu.id, name, p.url, image, price, stock, pu.cr_date, pu.diff from products p join product_updates pu on pu.product_id = p.id where pu.product_id = %s order by pu.cr_date desc limit 50", [param['id']])
+	catname = 'Item %s' % [param['id']]
+elif 'cat' in param and re.match('^[0-9]+$', param['cat']):
 	curs.execute("select name from categories where id=%s", [param['cat']])
 	(catname,), = curs.fetchall()
 	curs.execute("select pu.id, name, p.url, image, price, stock, pu.cr_date, pu.diff from products p join product_updates pu on pu.product_id = p.id join product_categories pc on pc.product_id = p.id where pc.category_id = %s and pu.cr_date > '2011-10-24'" + instock_str + " order by pu.cr_date desc limit 50", [param['cat']])
