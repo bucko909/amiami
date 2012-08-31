@@ -246,6 +246,8 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 					item['status'] = 'released'
 				elif status == ': ':
 					item['status'] = None
+				elif status == ': Sold Out':
+					item['status'] = 'soldout'
 				else:
 					raise Exception("Bad status: %s" % status)
 
