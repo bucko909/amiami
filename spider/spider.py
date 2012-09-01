@@ -246,10 +246,10 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 					item['status'] = 'released'
 				elif status == ': ':
 					item['status'] = None
-				elif status == ': Sold Out':
+				elif status == ': Sold out':
 					item['status'] = 'soldout'
 				else:
-					raise Exception("Bad status: %s" % status)
+					raise Exception("Bad status: %r" % status)
 
 				descr_zone = html.tostring(item_xml.xpath('ul[@class="product_ul"]/li[@class="product_name_list"]/a')[0])
 				matcher = re.match(ur'.*?>(.*)<!-- &nbsp;&lt;&nbsp;(.*?)&nbsp;&gt; -->.*', unicode(descr_zone)) # Combat terrible HTML encoding
