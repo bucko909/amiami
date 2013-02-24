@@ -165,9 +165,9 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 	if cat is not None:
 		catpart = '%s=%s&' % (cat_var, cat)
 	else:
-		catpart = ''
+		catpart = 's_condition_flg=0&'
 
-	url = 'http://www.amiami.com/top/search/list2?%spagemax=%i' % (catpart, n)
+	url = 'http://slist.amiami.com/top/search/list2?%spagemax=%i' % (catpart, n)
 	content = get_page(url, cached=cached).read()
 	if 'No item has found.' in content:
 		print "Empty result set"
@@ -206,11 +206,11 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 
 		xml = html.fromstring(page_content)
 		itemlist = list()
-		for item_xml in xml.xpath('//span[@class="list_table"]'):
+		for item_xml in xml.xpath('//td[@class="product_box"]'):
 			try:
 				item = {}
 
-				itemlink, = list(set(item_xml.xpath('span[@class="product_img"]/a/@href')))
+				itemlink, = list(set(item_xml.xpath('div[@class="product_img"]/a/@href')))
 				item['url'] = str(itemlink)
 				url_match = re.search(r'gcode=(.*?)&', item['url'])
 				if not url_match:
@@ -218,7 +218,7 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 				item['url'] = item['url'].split('&')[0]
 				item['code'] = url_match.group(1)
 
-				imgurl, = item_xml.xpath('span[@class="product_img"]/a/img/@src')
+				imgurl, = item_xml.xpath('div[@class="product_img"]/a/img/@src')
 				item['image'] = str(imgurl).replace('thumbnail','qvga')
 				if 'noimage.gif' in item['image']:
 					item['image'] = None
@@ -229,7 +229,13 @@ def find_updates(cat=None, cat_var='CategoryNickname', cached=False, full=False,
 				if len(status_elts) == 3:
 					if 'Sold out' in str(status_elts[2]):
 						item['stock'] = 'Sold out'
-				status = str(status_elts[1])
+					status = str(status_elts[1])
+				elif len(status_elts) < 2:
+					item['stock'] = None
+					status = ': '
+				else:
+					status = str(status_elts[1])
+
 				if status == ': Preorder':
 					item['status'] = 'preorder'
 				elif status == ': Tentative Preorder':
